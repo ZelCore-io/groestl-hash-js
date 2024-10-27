@@ -1,0 +1,73 @@
+name: Publish to npm on Version Bump
+
+# Trigger the workflow on push events to the main branch
+on:
+  push:
+    branches:
+      - main
+    # Optional: Run only when package.json is modified
+    # paths:
+    #   - 'package.json'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the repository code
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for version comparison
+
+      # 2. Setup Node.js environment
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Specify your Node.js version
+          registry-url: 'https://registry.npmjs.org/'
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: npm install
+
+      # 4. Get the current version from package.json
+      - name: Get current version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_ENV
+
+      # 5. Get the previous version from the last commit's package.json
+      - name: Get previous version
+        id: previous_version
+        run: |
+          # Check if there is a previous commit
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            PREVIOUS_VERSION=$(git show HEAD~1:package.json | node -p "require('./package.json').version")
+          else
+            PREVIOUS_VERSION=$CURRENT_VERSION
+          fi
+          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_ENV
+
+      # 6. Compare versions to detect a bump
+      - name: Check for version bump
+        id: version_check
+        run: |
+          if [ "$current_version" != "$previous_version" ]; then
+            echo "version_bumped=true" >> $GITHUB_ENV
+          else
+            echo "version_bumped=false" >> $GITHUB_ENV
+          fi
+
+      # 7. Publish to npm if version is bumped
+      - name: Publish to npm
+        if: env.version_bumped == 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 8. Notify if no version bump detected (optional)
+      - name: Notify no version bump
+        if: env.version_bumped != 'true'
+        run: echo "No version bump detected. Skipping npm publish."
