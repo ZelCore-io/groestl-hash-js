@@ -4,7 +4,7 @@ name: Publish to npm on Version Bump
 on:
   push:
     branches:
-      - main
+      - master
     # Optional: Run only when package.json is modified
     # paths:
     #   - 'package.json'
