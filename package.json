@@ -1,6 +1,6 @@
 {
   "name": "@runonflux/groestl-hash-js",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "groestl javascript hashing algorithm in pure javascript",
   "main": "index.js",
   "scripts": {
