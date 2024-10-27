@@ -1,6 +1,6 @@
 name: Publish to npm on Version Bump
 
-# Trigger the workflow on push events to the main branch
+# Trigger the workflow on push events to the master branch
 on:
   push:
     branches:
@@ -38,23 +38,20 @@ jobs:
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "current_version=$CURRENT_VERSION" >> $GITHUB_ENV
 
-      # 5. Get the previous version from the last commit's package.json
-      - name: Get previous version
-        id: previous_version
+      # 5. Get the latest published version from npm
+      - name: Get latest published version from npm
+        id: latest_version
         run: |
-          # Check if there is a previous commit
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            PREVIOUS_VERSION=$(git show HEAD~1:package.json | node -p "require('./package.json').version")
-          else
-            PREVIOUS_VERSION=$CURRENT_VERSION
-          fi
-          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_ENV
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          # Fetch the latest version from npm registry
+          LATEST_VERSION=$(npm view "$PACKAGE_NAME" version || echo "0.0.0")
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_ENV
 
       # 6. Compare versions to detect a bump
       - name: Check for version bump
         id: version_check
         run: |
-          if [ "$current_version" != "$previous_version" ]; then
+          if [ "$(printf '%s\n' "$LATEST_VERSION" "$CURRENT_VERSION" | sort -V | tail -n1)" = "$CURRENT_VERSION" ] && [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
             echo "version_bumped=true" >> $GITHUB_ENV
           else
             echo "version_bumped=false" >> $GITHUB_ENV
