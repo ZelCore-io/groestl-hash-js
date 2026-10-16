@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quantumexplorer/groestl-hash-js.git"
+    "url": "git+https://github.com/ZelCore-io/groestl-hash-js.git"
   },
   "keywords": [
     "groestl"
