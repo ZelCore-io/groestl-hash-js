@@ -1,70 +1,80 @@
-name: Publish to npm on Version Bump
+name: Publish to npm
 
-# Trigger the workflow on push events to the master branch
+# Publishes @runonflux/groestl-hash-js from CI with npm trusted publishing
+# (OIDC) and a signed provenance attestation, so consumers can check that a
+# given npm version was built from this repository at a given tag
+# (`npm audit signatures`). There is no long-lived npm token anywhere: npm
+# exchanges this job's short-lived GitHub OIDC token for a publish credential,
+# and only for the repo + workflow file + environment configured as the
+# package's trusted publisher on npmjs.com.
+#
+# Release: bump package.json "version", merge to master, then push tag vX.Y.Z.
 on:
   push:
-    branches:
-      - master
-    # Optional: Run only when package.json is modified
-    # paths:
-    #   - 'package.json'
+    tags: ['v*']
+
+# Nothing by default; the job below asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
 
 jobs:
   publish:
+    name: verify, test, build, publish (provenance)
     runs-on: ubuntu-latest
-
+    # Required reviewers + "selected tags: v*" are configured on this
+    # environment in the repo settings; the npm trusted publisher is bound to it.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing + provenance
     steps:
-      # 1. Checkout the repository code
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # Third-party actions are pinned to full commit SHAs (tags can be moved).
+      # No dependency caches in this job: a release must not restore state
+      # written by other workflow runs (cache poisoning).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0  # Fetch all history for version comparison
-
-      # 2. Setup Node.js environment
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'  # Specify your Node.js version
-          registry-url: 'https://registry.npmjs.org/'
+          node-version: 24
+          # No registry-url: npm gets its publish token from OIDC (trusted
+          # publishing), and the .npmrc setup-node would write holds an unset
+          # ${NODE_AUTH_TOKEN} that yarn v1 refuses to load.
 
-      # 3. Install dependencies
-      - name: Install dependencies
-        run: npm install
+      # Trusted publishing needs npm >= 11.5.1. Pinned exactly.
+      - name: Pin npm
+        run: npm install -g --ignore-scripts npm@11.19.1 && npm --version
 
-      # 4. Get the current version from package.json
-      - name: Get current version
-        id: current_version
+      - name: Tag must equal package.json version
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_ENV
-
-      # 5. Get the latest published version from npm
-      - name: Get latest published version from npm
-        id: latest_version
-        run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          # Fetch the latest version from npm registry
-          LATEST_VERSION=$(npm view "$PACKAGE_NAME" version || echo "0.0.0")
-          echo "latest_version=$LATEST_VERSION" >> $GITHUB_ENV
-
-      # 6. Compare versions to detect a bump
-      - name: Check for version bump
-        id: version_check
-        run: |
-          if [ "${{env.latest_version}}" != "${{env.current_version}}" ]; then
-            echo "version_bumped=true" >> $GITHUB_ENV
-          else
-            echo "version_bumped=false" >> $GITHUB_ENV
+          version="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v${version}" ]; then
+            echo "::error::tag ${TAG} does not match package.json version ${version}"
+            exit 1
           fi
 
-      # 7. Publish to npm if version is bumped
-      - name: Publish to npm
-        if: env.version_bumped == 'true'
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Lifecycle scripts of dependencies never run on the release runner.
+      # The package has no runtime dependencies; package-lock.json pins the
+      # test and grunt/browserify build toolchain.
+      - run: npm ci --ignore-scripts
+      # Full unit suite (mocha, offline), with no exclusions. No linter is
+      # configured in this repo.
+      - run: npm test
+      # Rebuilds the browser bundles dist/groestl-hash.js and .min.js
+      # (browserify + uglify, deterministic with the lockfile) from the tagged
+      # sources, so the dist/ that ships is built from this tag.
+      - run: npm run build
 
-      # 8. Notify if no version bump detected (optional)
-      - name: Notify no version bump
-        if: env.version_bumped != 'true'
-        run: echo "No version bump detected. Skipping npm publish."
+      # --ignore-scripts: publish exactly the tarball of what was built and
+      # tested above (no lifecycle scripts during publish).
+      - name: Stage publish with provenance (maintainer approves on npm)
+        # Staged publishing: CI uploads the version (with provenance) but it is
+        # NOT live until a maintainer approves it with 2FA on npmjs.com or via
+        # `npm stage approve <stage-id>`. The npm trusted publisher is configured
+        # without 'Allow npm publish', so a direct `npm publish` would be refused.
+        run: npm stage publish --provenance --access public --ignore-scripts
